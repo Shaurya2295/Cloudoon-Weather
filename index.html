@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudoon Weather</title>
+
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio,line-clamp"></script>
+
+    <!-- React & ReactDOM via CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+    <!-- Babel via CDN (for JSX in script block below) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Heroicons v2 (Outline) - Not directly used by components, but kept for reference -->
+    <!-- <script type="module" src="https://cdn.jsdelivr.net/npm/@heroicons/react@2.0.18/24/outline/index.js"></script> -->
+
+    <!-- Embedded CSS -->
+    <style>
+        body {
+             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+             -webkit-font-smoothing: antialiased;
+             -moz-osx-font-smoothing: grayscale;
+             transition: background-color 0.7s ease-in-out; /* Smooth background transition */
+         }
+         .loader {
+             border: 5px solid #f3f3f3; /* Light grey */
+             border-top: 5px solid #60a5fa; /* Tailwind blue-400 */
+             border-radius: 50%;
+             width: 50px;
+             height: 50px;
+             animation: spin 1s linear infinite;
+             margin: 40px auto; /* More margin when loading */
+         }
+         @keyframes spin {
+             0% { transform: rotate(0deg); }
+             100% { transform: rotate(360deg); }
+         }
+         /* Ensure SVGs scale reasonably */
+         .weather-image svg {
+              width: 100%;
+              height: 100%;
+         }
+          /* Custom text shadow for better readability on gradients */
+         .text-shadow-custom {
+              text-shadow: 1px 1px 4px rgba(0,0,0,0.4);
+         }
+         .text-shadow-heavy {
+              text-shadow: 2px 3px 6px rgba(0,0,0,0.5);
+         }
+         .text-shadow-title {
+              text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+         }
+
+          /* Basic select styling */
+          select {
+             -webkit-appearance: none;
+             -moz-appearance: none;
+             appearance: none;
+             /* SVG arrow icon (white) */
+             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2' stroke='white' class='w-6 h-6'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19.5 8.25l-7.5 7.5-7.5-7.5' /%3E%3C/svg%3E%0A");
+             background-repeat: no-repeat;
+             background-position: right 0.5rem center;
+             background-size: 1.2em;
+             padding-right: 2.5rem; /* Make space for arrow */
+         }
+
+          /* Scrollbar styling (for forecast section) */
+          .scrollbar-thin { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.3) transparent;}
+         .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+         .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+         .scrollbar-thin::-webkit-scrollbar-thumb { background-color: rgba(255, 255, 255, 0.3); border-radius: 10px; border: 3px solid transparent; }
+    </style>
+
+</head>
+<body>
+    <!-- The container where React will mount the app -->
+    <div id="root"></div>
+
+    <!-- Embedded React/JSX Script -->
+    <!-- IMPORTANT: type="text/babel" is ESSENTIAL for JSX transformation -->
+    <script type="text/babel" defer>
+        const { useState, useEffect, useCallback } = React;
+
+        // --- Configuration ---
+        const API_KEY = 'dbf4753284a34b5e88e101958251504'; // Replace with your key if needed
+        const IMAGE_BASE_PATH = 'images/'; // Assumes 'images' folder is sibling to this HTML file
+        const PREDEFINED_LOCATIONS = ['London', 'Mumbai', 'Tokyo', 'New York', 'Paris', 'Sydney', 'Cairo'];
+        const DEFAULT_LOCATION = PREDEFINED_LOCATIONS[0]; // London
+
+        // --- Helper Functions ---
+        const svgSnow = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="lightblue" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2v1m0 18v1m-6.364-6.364l.707.707M17.657 6.343l.707.707m-12.728 0l-.707.707M18.364 17.657l-.707.707M2 12h1m18 0h1M5.636 6.343l-.707-.707m12.728 0l.707-.707m-1.414 7.071L12 12l-5.657 5.657m11.314 0L12 12l5.657-5.657M12 6l-2 3h4l-2-3z m0 12l-2-3h4l-2 3z m-6-6l3-2v4l-3-2z m12 0l-3-2v4l3-2z"/></svg>`;
+        const svgMist = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="lightgray" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12h18M3 6h18M3 18h18M8 3l-3 9h14l-3-9M8 21l-3-9h14l-3 9"/></svg>`;
+
+        function getWeatherImage(weatherData) {
+            const defaultImage = IMAGE_BASE_PATH + 'default.png';
+            if (!weatherData || !weatherData.weather || !weatherData.weather[0]) {
+                console.warn("getWeatherImage: Invalid weatherData, returning default.", weatherData);
+                return defaultImage;
+            }
+
+            const condition = weatherData.weather[0].main.toLowerCase();
+            const description = weatherData.weather[0].description.toLowerCase();
+            // Ensure icon code exists, provide defaults based on condition if not
+            const iconCode = weatherData.weather[0].icon || (condition === 'clear' ? '01d' : (condition === 'clouds' ? '03d' : '01d'));
+            const isNight = iconCode.includes('n');
+
+            // console.log(`getWeatherImage: Condition=${condition}, Desc=${description}, Icon=${iconCode}, Night=${isNight}`);
+
+            if (isNight) {
+                switch (condition) {
+                    case 'clear': return IMAGE_BASE_PATH + 'cloudynight.png';
+                    case 'clouds': return IMAGE_BASE_PATH + 'cloudynight.png'; // Use same for cloudy night
+                    case 'rain': case 'drizzle':
+                        if (description.includes('heavy')) return IMAGE_BASE_PATH + 'heavyrain.png';
+                        return IMAGE_BASE_PATH + 'normalrain.png';
+                    case 'thunderstorm': return IMAGE_BASE_PATH + 'thunderstorm.png';
+                    case 'snow': return svgSnow;
+                    case 'mist': case 'smoke': case 'haze': case 'dust': case 'fog': case 'sand': case 'ash': case 'squall': case 'tornado': return svgMist;
+                    default: return IMAGE_BASE_PATH + 'cloudynight.png'; // Default night image
+                }
+            } else { // Day time
+                switch (condition) {
+                    case 'clear': return IMAGE_BASE_PATH + 'sunshine.png';
+                    case 'clouds':
+                         // Handle different cloud types if desired, otherwise one cloudy image
+                        // if (description.includes('few') || description.includes('scattered')) return IMAGE_BASE_PATH + 'cloudysunshine.png';
+                        // if (description.includes('broken') || description.includes('overcast')) return IMAGE_BASE_PATH + 'cloudy.png'; // Need a cloudy.png?
+                        return IMAGE_BASE_PATH + 'cloudysunshine.png'; // General daytime clouds
+                    case 'rain': case 'drizzle':
+                        // Random chance for sun and rain for light/shower rain
+                        if ((description.includes('shower') || description.includes('light rain')) && Math.random() > 0.5) return IMAGE_BASE_PATH + 'sunandrain.png';
+                        if (description.includes('heavy')) return IMAGE_BASE_PATH + 'heavyrain.png';
+                        return IMAGE_BASE_PATH + 'normalrain.png';
+                    case 'thunderstorm': return IMAGE_BASE_PATH + 'thunderstorm.png';
+                    case 'snow': return svgSnow;
+                    case 'mist': case 'smoke': case 'haze': case 'dust': case 'fog': case 'sand': case 'ash': case 'squall': case 'tornado': return svgMist;
+                    default: return IMAGE_BASE_PATH + 'sunshine.png'; // Default day image
+                }
+            }
+        }
+
+        function getBackgroundGradient(weatherData) {
+            if (!weatherData || !weatherData.weather || !weatherData.weather[0]) {
+                return 'from-gray-400 to-gray-600'; // Default gradient
+            }
+            const condition = weatherData.weather[0].main.toLowerCase();
+            const description = weatherData.weather[0].description.toLowerCase();
+             // Ensure icon code exists, provide defaults based on condition if not
+            const iconCode = weatherData.weather[0].icon || (condition === 'clear' ? '01d' : (condition === 'clouds' ? '03d' : '01d'));
+            const isNight = iconCode.includes('n');
+
+            if (isNight) {
+                return 'from-indigo-800 via-purple-800 to-black'; // Night gradient
+            }
+
+            // Day time gradients
+            switch (condition) {
+                case 'clear': return 'from-yellow-300 via-orange-400 to-red-500'; // Sunny
+                case 'clouds': return 'from-sky-300 via-blue-400 to-gray-400'; // Cloudy
+                case 'rain': case 'drizzle':
+                    // Chance for brighter "sun shower" gradient
+                    if ((description.includes('shower') || description.includes('light')) && Math.random() > 0.3) {
+                        return 'from-blue-400 via-yellow-200 to-sky-400';
+                    }
+                    return 'from-blue-500 via-indigo-600 to-slate-700'; // Standard rain
+                case 'thunderstorm': return 'from-slate-600 via-indigo-700 to-purple-800'; // Stormy
+                case 'snow': return 'from-sky-200 via-cyan-300 to-indigo-200'; // Snowy
+                case 'mist': case 'fog': case 'haze': return 'from-slate-300 via-gray-400 to-slate-500'; // Misty/Foggy
+                default: return 'from-teal-200 to-blue-300'; // Generic pleasant day
+            }
+        }
+
+        // Format date for forecast (e.g., "Mon, Jul 29")
+        function formatDate(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        }
+
+        // Format time (e.g., "6:00 AM")
+        function formatTime(timestamp) {
+            if (!timestamp) return 'N/A';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        }
+
+        // --- Mock Data Store ---
+        // Only include necessary mock data for fallback
+        const mockWeatherDataStore = {
+            'london': {
+                current: { name: 'London', sys: { country: 'GB', sunrise: 1678881600, sunset: 1678926000 }, main: { temp: 15, feels_like: 14, humidity: 75, pressure: 1012 }, visibility: 10000, wind: { speed: 5 }, weather: [{ main: 'Clouds', description: 'overcast clouds', icon: '04d' }] },
+                forecast: [
+                    { dateStr: 'Mon, Jul 29', minTemp: 12, maxTemp: 18, condition: 'Clouds', description: 'broken clouds', icon: '04d' },
+                    { dateStr: 'Tue, Jul 30', minTemp: 13, maxTemp: 20, condition: 'Rain', description: 'light intensity shower rain', icon: '09d' },
+                    { dateStr: 'Wed, Jul 31', minTemp: 14, maxTemp: 21, condition: 'Clear', description: 'clear sky', icon: '01d' },
+                    { dateStr: 'Thu, Aug 01', minTemp: 15, maxTemp: 22, condition: 'Clouds', description: 'scattered clouds', icon: '03d' },
+                    { dateStr: 'Fri, Aug 02', minTemp: 14, maxTemp: 20, condition: 'Rain', description: 'light rain', icon: '10d' },
+                    { dateStr: 'Sat, Aug 03', minTemp: 13, maxTemp: 19, condition: 'Clouds', description: 'few clouds', icon: '02d' },
+                    { dateStr: 'Sun, Aug 04', minTemp: 14, maxTemp: 21, condition: 'Clear', description: 'clear sky', icon: '01d' }
+                ]
+            },
+             'mumbai': { // Example of another city's mock data
+                current: { name: 'Mumbai', sys: { country: 'IN', sunrise: 1678881600 + 18000, sunset: 1678926000 + 18000 }, main: { temp: 29, feels_like: 33, humidity: 85, pressure: 1005 }, visibility: 6000, wind: { speed: 7 }, weather: [{ main: 'Rain', description: 'heavy intensity rain', icon: '10d' }] },
+                forecast: [
+                    { dateStr: 'Mon, Jul 29', minTemp: 27, maxTemp: 30, condition: 'Rain', description: 'moderate rain', icon: '10d' },
+                    { dateStr: 'Tue, Jul 30', minTemp: 26, maxTemp: 29, condition: 'Rain', description: 'heavy intensity rain', icon: '10d' },
+                    { dateStr: 'Wed, Jul 31', minTemp: 27, maxTemp: 30, condition: 'Thunderstorm', description: 'thunderstorm with rain', icon: '11d' },
+                    { dateStr: 'Thu, Aug 01', minTemp: 27, maxTemp: 31, condition: 'Rain', description: 'moderate rain', icon: '10d' },
+                    { dateStr: 'Fri, Aug 02', minTemp: 26, maxTemp: 30, condition: 'Clouds', description: 'broken clouds', icon: '04d' },
+                    { dateStr: 'Sat, Aug 03', minTemp: 27, maxTemp: 31, condition: 'Rain', description: 'light rain', icon: '10d' },
+                    { dateStr: 'Sun, Aug 04', minTemp: 28, maxTemp: 32, condition: 'Clouds', description: 'scattered clouds', icon: '03d' }
+                ]
+            },
+            // Add other cities here if needed for offline testing
+            'default': { // Generic fallback if specific city mock data is missing
+                current: { name: 'Sample City', sys: { country: 'N/A', sunrise: 1678881600, sunset: 1678926000 }, main: { temp: 20, feels_like: 19, humidity: 60, pressure: 1010 }, visibility: 10000, wind: { speed: 4 }, weather: [{ main: 'Clouds', description: 'few clouds', icon: '02d' }] },
+                forecast: [
+                     { dateStr: 'Mon, Jul 29', minTemp: 18, maxTemp: 24, condition: 'Clouds', description: 'scattered clouds', icon: '03d' },
+                     { dateStr: 'Tue, Jul 30', minTemp: 19, maxTemp: 25, condition: 'Clear', description: 'clear sky', icon: '01d' },
+                     { dateStr: 'Wed, Jul 31', minTemp: 17, maxTemp: 23, condition: 'Rain', description: 'light rain', icon: '10d' },
+                     { dateStr: 'Thu, Aug 01', minTemp: 18, maxTemp: 24, condition: 'Clouds', description: 'broken clouds', icon: '04d' },
+                     { dateStr: 'Fri, Aug 02', minTemp: 19, maxTemp: 26, condition: 'Clear', description: 'clear sky', icon: '01d' },
+                     { dateStr: 'Sat, Aug 03', minTemp: 20, maxTemp: 27, condition: 'Clouds', description: 'few clouds', icon: '02d' },
+                     { dateStr: 'Sun, Aug 04', minTemp: 18, maxTemp: 25, condition: 'Rain', description: 'shower rain', icon: '09d' }
+                ]
+            }
+        };
+
+        function getMockData(location) {
+            const key = location.toLowerCase();
+            // Use specific mock data if available, otherwise use 'default'
+            const mockData = mockWeatherDataStore[key] || mockWeatherDataStore['default'];
+
+            // Pre-process forecast images for mock data
+            const processedForecast = mockData.forecast.map(day => {
+                const mockWeatherDataForImage = { weather: [{ main: day.condition, description: day.description, icon: day.icon }] };
+                return {
+                    ...day,
+                    image: getWeatherImage(mockWeatherDataForImage)
+                };
+            });
+            // console.log(`getMockData for ${location}: Returning data for ${mockData.current.name}`);
+            return { current: mockData.current, forecast: processedForecast };
+        }
+
+        // Process REAL forecast data from API
+        function processForecastData(forecastList) {
+            if (!forecastList || forecastList.length === 0) {
+                console.warn("processForecastData: Received empty or null forecast list.");
+                return [];
+            }
+            const dailyData = {};
+
+            // Group forecast items by day
+            forecastList.forEach(item => {
+                const dateStr = formatDate(item.dt);
+                if (!dailyData[dateStr]) {
+                    // Initialize daily data structure
+                    dailyData[dateStr] = {
+                        date: new Date(item.dt * 1000),
+                        temps: [],
+                        weatherDetails: [], // Store all weather details for the day
+                        dt: item.dt // Store the first timestamp for the day
+                    };
+                }
+                dailyData[dateStr].temps.push(item.main.temp);
+                // Store weather main, description, and icon for each 3-hour interval
+                dailyData[dateStr].weatherDetails.push({
+                    main: item.weather[0].main,
+                    description: item.weather[0].description,
+                    icon: item.weather[0].icon,
+                    timestamp: item.dt // Keep track of the timestamp for this specific entry
+                });
+            });
+
+            // Process grouped data to get daily summaries
+            return Object.values(dailyData).map(day => {
+                const minTemp = Math.min(...day.temps);
+                const maxTemp = Math.max(...day.temps);
+
+                // Find the weather detail closest to 2 PM (14:00) for a representative daytime condition
+                let representativeWeather = day.weatherDetails[0]; // Default to first entry
+                let minHourDiff = 24; // Max possible difference
+
+                day.weatherDetails.forEach(detail => {
+                    const hour = new Date(detail.timestamp * 1000).getHours();
+                    const diff = Math.abs(hour - 14); // Difference from 2 PM
+                    if (diff < minHourDiff) {
+                        minHourDiff = diff;
+                        representativeWeather = detail;
+                    }
+                });
+
+                // Create a structure similar to current weather data for image selection
+                const mockWeatherDataForImage = { weather: [representativeWeather] };
+
+                return {
+                    dateStr: formatDate(day.dt),
+                    minTemp: Math.round(minTemp),
+                    maxTemp: Math.round(maxTemp),
+                    condition: representativeWeather.main,
+                    description: representativeWeather.description, // Keep description
+                    image: getWeatherImage(mockWeatherDataForImage) // Get image based on representative weather
+                };
+            }).slice(0, 7); // Ensure we only return max 7 days
+        }
+
+         // --- Simple Icon Component (Renders SVG Paths Directly) ---
+        function Icon({ path, className = "w-6 h-6", fill = "none", stroke = "currentColor", strokeWidth = 1.5 }) {
+             return (
+                 <svg xmlns="http://www.w3.org/2000/svg" fill={fill} viewBox="0 0 24 24" strokeWidth={strokeWidth} stroke={stroke} className={className}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d={path} />
+                </svg>
+            );
+        }
+
+        // --- React App Component ---
+        function App() {
+            const [selectedLocation, setSelectedLocation] = useState(DEFAULT_LOCATION);
+            const [weatherData, setWeatherData] = useState(null);
+            const [forecastData, setForecastData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null); // Stores error messages for display
+            const [isMockData, setIsMockData] = useState(false); // Tracks if mock data is shown
+
+            // Fetch weather data from API or use mock on failure
+            const fetchWeatherData = useCallback((location) => {
+                setLoading(true);
+                setError(null); // Clear previous errors
+                setWeatherData(null); // Clear previous data
+                setForecastData(null);
+                setIsMockData(false); // Reset mock data flag
+                // console.log(`Fetching weather for: ${location}`);
+
+                const currentWeatherUrl = `https://api.openweathermap.org/data/2.5/weather?q=${location}&appid=${API_KEY}&units=metric`;
+                const forecastUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${location}&appid=${API_KEY}&units=metric`;
+
+                Promise.all([fetch(currentWeatherUrl), fetch(forecastUrl)])
+                    .then(async ([currentRes, forecastRes]) => {
+                        let currentData, forecastRawData;
+                        let fetchError = null; // Track errors during fetch
+
+                        // Process Current Weather Response
+                        if (currentRes.status === 401) { throw new Error("Invalid API Key"); }
+                        if (!currentRes.ok) {
+                            const errorJson = await currentRes.json().catch(() => ({ message: `HTTP ${currentRes.status}` }));
+                            fetchError = `Current Weather Error: ${errorJson.message || currentRes.statusText}`;
+                            // Don't throw yet, try forecast
+                        } else {
+                            currentData = await currentRes.json();
+                        }
+
+                        // Process Forecast Response (Only if current weather was okay or we want to try anyway)
+                        if (forecastRes.status === 401 && !fetchError) { throw new Error("Invalid API Key"); }
+                         // Allow forecast to fail gracefully if current weather worked
+                        if (!forecastRes.ok) {
+                             const errorJson = await forecastRes.json().catch(() => ({ message: `HTTP ${forecastRes.status}` }));
+                            console.warn(`Forecast Error: ${errorJson.message || forecastRes.statusText}. Proceeding without forecast data.`);
+                            forecastRawData = null; // Set to null if forecast fails
+                        } else {
+                             // Only parse if response is ok
+                             if (currentData) { // Only process if current weather succeeded
+                                 forecastRawData = await forecastRes.json();
+                             }
+                        }
+
+                         // If there was a critical error fetching current weather, throw it now
+                         if (fetchError) {
+                             throw new Error(fetchError);
+                         }
+
+                        // If we got here, at least current weather is likely okay
+                        // console.log("API Success:", { currentData, forecastRawData });
+                        setWeatherData(currentData);
+                        setForecastData(processForecastData(forecastRawData?.list)); // Process forecast (handles null list)
+                        setError(null); // Clear error if successful
+                        setIsMockData(false);
+                    })
+                    .catch(err => {
+                        console.error("API Fetch Error:", err);
+                        // Fallback to Mock Data
+                        const mock = getMockData(location);
+                        // console.log(`Falling back to mock data for ${location}:`, mock);
+                        setWeatherData(mock.current);
+                        setForecastData(mock.forecast); // Use pre-processed mock forecast
+                        // Set error message for user, indicating mock data usage
+                        setError(`API Error: ${err.message}. Displaying sample data for ${mock.current.name}.`);
+                        setIsMockData(true);
+                    })
+                    .finally(() => {
+                        setLoading(false); // Stop loading indicator regardless of outcome
+                        // console.log("Loading finished.");
+                    });
+            }, []); // Empty dependency array: fetchWeatherData function is created once
+
+            // Effect to fetch data when location changes
+            useEffect(() => {
+                fetchWeatherData(selectedLocation);
+            }, [selectedLocation, fetchWeatherData]); // Re-run effect if location changes
+
+            // Handler for the location dropdown
+            const handleLocationChange = (event) => {
+                setSelectedLocation(event.target.value);
+            };
+
+            // Determine background and image based on current data (or defaults)
+            const backgroundGradient = weatherData ? getBackgroundGradient(weatherData) : 'from-gray-400 to-gray-600';
+            const currentImage = weatherData ? getWeatherImage(weatherData) : IMAGE_BASE_PATH + 'default.png';
+
+            // Define SVG paths for icons (Heroicons v2 Outline)
+             const iconPaths = {
+                 feelsLike: "M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z", // Thermometer-like check inside circle
+                 wind: "M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.125 1.125 0 010 2.25H5.625a1.125 1.125 0 010-2.25z", // Wind lines
+                 humidity: "M12 21a9.004 9.004 0 008.713-6.786 1.5 1.5 0 00-2.908-.828A6.005 6.005 0 0112 18a6 6 0 01-5.805-4.114 1.5 1.5 0 00-2.908.828A9.004 9.004 0 0012 21zm0-18a.75.75 0 01.75.75v1.51a5.986 5.986 0 015.02 5.358 1.5 1.5 0 01-2.998.164A3.001 3.001 0 0012 8.25a3 3 0 00-2.772 1.588 1.5 1.5 0 11-2.688-1.118A5.986 5.986 0 0111.25 5.26V4.5a.75.75 0 01.75-.75z", // Droplet shape
+                 pressure: "M3.75 6A2.25 2.25 0 016 3.75h12A2.25 2.25 0 0120.25 6v12A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18V6zM6 6.75v10.5a.75.75 0 00.75.75h10.5a.75.75 0 00.75-.75V6.75a.75.75 0 00-.75-.75H6.75a.75.75 0 00-.75.75zM8.25 9a.75.75 0 01.75-.75h6a.75.75 0 010 1.5H9a.75.75 0 01-.75-.75zm0 3.75a.75.75 0 01.75-.75H12a.75.75 0 010 1.5H9a.75.75 0 01-.75-.75z", // Barometer/Gauge
+                 visibility: "M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178zM12 17a5 5 0 100-10 5 5 0 000 10z", // Eye
+                 sunrise: "M12 3v10.5m0 0a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm0 0V21m8.25-18H3.75a1.5 1.5 0 010 3h16.5a1.5 1.5 0 010-3z", // Sunrise symbol
+                 sunset: "M12 13.5V21m0 0a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm0 0v-7.5m8.25 4.5H3.75a1.5 1.5 0 010-3h16.5a1.5 1.5 0 010 3z", // Sunset symbol
+                 uv: "M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z", // Sun (for UV)
+                 air: "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75a17.933 17.933 0 01-7.499-1.632z" // User icon (placeholder for Air Quality)
+            };
+
+            // Determine display name (handles mock data case)
+             const locationDisplayName = weatherData ? `${weatherData.name}, ${weatherData.sys?.country || ''}` : selectedLocation;
+             const displayTitle = isMockData ? `${locationDisplayName} (Sample Data)` : locationDisplayName;
+
+            return (
+                <div className={`min-h-screen w-full bg-gradient-to-br ${backgroundGradient} p-4 sm:p-6 md:p-8 text-white flex flex-col transition-colors duration-700 ease-in-out`}>
+
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 md:mb-10 flex-shrink-0">
+                        <h1 className="text-3xl sm:text-4xl font-extrabold uppercase tracking-wider text-shadow-title">
+                            CLOUDOON
+                        </h1>
+                        <div className="relative">
+                             <select
+                                value={selectedLocation}
+                                onChange={handleLocationChange}
+                                disabled={loading} // Disable dropdown while loading
+                                className="bg-white/20 backdrop-blur-sm rounded-full py-2 pl-4 pr-10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer shadow-md appearance-none disabled:opacity-50"
+                            >
+                                {PREDEFINED_LOCATIONS.map(loc => (
+                                    <option key={loc} value={loc} className="text-black bg-white">
+                                        {loc}
+                                    </option>
+                                ))}
+                            </select>
+                            {/* Arrow handled by CSS background-image */}
+                        </div>
+                    </div>
+
+                    {/* Main Content Area */}
+                    <div className="flex-grow flex flex-col items-center justify-center text-center px-2">
+                         {loading && <div className="loader"></div>}
+
+                         {/* Display error message if fetching failed */}
+                         {error && !loading && (
+                             <div className="text-yellow-200 bg-red-800/70 backdrop-blur-sm p-3 rounded-lg mb-4 text-sm shadow-lg max-w-md mx-auto">
+                                {error}
+                             </div>
+                         )}
+
+                         {/* Display Weather Data */}
+                         {weatherData && !loading && (
+                            <React.Fragment>
+                                {/* Weather Image */}
+                                <img
+                                    key={currentImage} // Add key to force re-render on image change
+                                    src={currentImage}
+                                    alt={weatherData.weather[0].description || 'Weather condition'}
+                                    className="weather-image w-48 h-48 sm:w-56 sm:h-56 md:w-64 md:h-64 object-contain mb-1 md:mb-0 drop-shadow-xl -mt-8 sm:-mt-4"
+                                    onError={(e) => { if (e.target.src !== IMAGE_BASE_PATH + 'default.png') { e.target.onerror = null; e.target.src = IMAGE_BASE_PATH + 'default.png'; console.error("Failed to load image:", e.target.src)} }}
+                                />
+
+                                 {/* Temperature */}
+                                <div className="text-7xl sm:text-8xl md:text-9xl font-thin mb-0 md:mb-0 text-shadow-heavy -mt-2">
+                                    {Math.round(weatherData.main.temp)}°C
+                                </div>
+
+                                {/* Location & Description */}
+                                <div className="text-xl sm:text-2xl font-semibold mb-1 text-shadow-custom">{displayTitle}</div>
+                                <div className="text-lg sm:text-xl capitalize mb-6 sm:mb-8 font-medium text-shadow-custom opacity-90">{weatherData.weather[0].description}</div>
+
+                                {/* Details Grid/Flex */}
+                                <div className="flex flex-wrap justify-center items-stretch gap-x-3 gap-y-3 sm:gap-x-4 sm:gap-y-4 w-full max-w-4xl mb-8 sm:mb-12 text-sm sm:text-base px-2 sm:px-4">
+                                    {[ // Array for easier rendering of detail items
+                                        { icon: iconPaths.feelsLike, value: `${Math.round(weatherData.main.feels_like)}°C`, label: "Feels Like" },
+                                        { icon: iconPaths.wind, value: `${weatherData.wind?.speed || 'N/A'} m/s`, label: "Wind" },
+                                        { icon: iconPaths.humidity, value: `${weatherData.main.humidity}%`, label: "Humidity" },
+                                        { icon: iconPaths.pressure, value: `${weatherData.main.pressure} hPa`, label: "Pressure" },
+                                        { icon: iconPaths.visibility, value: `${(weatherData.visibility / 1000).toFixed(1)} km`, label: "Visibility" },
+                                        { icon: iconPaths.sunrise, value: formatTime(weatherData.sys?.sunrise), label: "Sunrise" },
+                                        { icon: iconPaths.sunset, value: formatTime(weatherData.sys?.sunset), label: "Sunset" },
+                                        { icon: iconPaths.uv, value: "N/A", label: "UV Index", placeholder: true },
+                                        { icon: iconPaths.air, value: "N/A", label: "Air Quality", placeholder: true },
+                                    ].map((item, index) => (
+                                        <div key={index} className={`flex items-center space-x-2 p-2 bg-black/10 rounded-lg ${item.placeholder ? 'opacity-60 italic' : 'opacity-90'}`}>
+                                            <Icon path={item.icon} className="w-5 h-5 sm:w-6 sm:h-6 flex-shrink-0" />
+                                            <div className="text-left">
+                                                <div>{item.value}</div>
+                                                <div className="text-xs opacity-70">{item.label}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Forecast Section */}
+                                {forecastData && forecastData.length > 0 && (
+                                    <div className="w-full max-w-4xl bg-black/15 backdrop-blur-sm p-4 sm:p-5 rounded-xl shadow-lg mt-auto mb-4"> {/* Added mb-4 */}
+                                        <h2 className="text-lg sm:text-xl font-semibold mb-3 text-center text-shadow-custom opacity-95">7-Day Forecast</h2>
+                                        <div className="flex flex-nowrap overflow-x-auto space-x-3 sm:space-x-4 pb-2 scrollbar-thin">
+                                            {forecastData.map((day, index) => (
+                                                <div key={index} className="flex-shrink-0 w-24 sm:w-28 flex flex-col items-center bg-white/10 hover:bg-white/20 p-3 rounded-lg text-center transition-colors duration-200 cursor-default">
+                                                    <div className="text-sm font-medium mb-1 opacity-90">{day.dateStr.split(', ')[0]}</div> {/* Day */}
+                                                    <div className="text-xs text-gray-300 mb-2">{day.dateStr.split(', ')[1]}</div> {/* Date */}
+                                                    <img
+                                                        key={day.image} // Add key to force re-render
+                                                        src={day.image}
+                                                        alt={day.description}
+                                                        className="weather-image w-10 h-10 sm:w-12 sm:h-12 object-contain mb-2 drop-shadow-md"
+                                                        onError={(e) => { if (e.target.src !== IMAGE_BASE_PATH + 'default.png') { e.target.onerror = null; e.target.src = IMAGE_BASE_PATH + 'default.png'; } }}
+                                                    />
+                                                    <div className="text-sm sm:text-base font-semibold">
+                                                        <span>{day.maxTemp}°</span><span className="text-gray-300">/{day.minTemp}°</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </React.Fragment>
+                         )}
+                    </div> {/* End Main Content Area */}
+
+                </div> /* End Root Container */
+            );
+        }
+
+        // --- Render the React App ---
+        const rootElement = document.getElementById('root');
+        if (rootElement) {
+            const root = ReactDOM.createRoot(rootElement);
+            root.render(<App />);
+        } else {
+            console.error("Fatal Error: Root element with ID 'root' not found.");
+        }
+
+    </script>
+
+</body>
+</html>
